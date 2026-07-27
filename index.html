@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>☀️ 캠스터디 — 함께 공부해요!</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Jua&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+<link rel="stylesheet" href="./css/style.css">
+<link rel="stylesheet" href="./style.css">
+<style>
+  /* CSS 파일이 로드되기 전이나 정적 파일 호스팅 시 기본 스크린 숨김 처리 */
+  .screen:not(.active) { display: none !important; }
+  .modal-overlay.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ 1단계: 권한 요청 화면 ═══════════════════ -->
+<section id="permission-screen" class="screen active">
+  <div class="glass-card intro-card">
+    <div class="intro-emoji">📚✨</div>
+    <h1 class="intro-title">캠스터디에 오신 것을 환영해요!</h1>
+    <p class="intro-desc">
+      함께 공부하는 친구들에게 나의 공부 모습을 보여주기 위해<br>
+      <strong>웹캠</strong>과 <strong>화면 공유</strong> 권한이 필요해요.
+    </p>
+
+    <ul class="permission-list">
+      <li id="perm-cam" class="perm-item">
+        <span class="perm-icon"><i class="fa-solid fa-video"></i></span>
+        <span class="perm-label">웹캠 (카메라)</span>
+        <span class="perm-status pending">대기 중</span>
+      </li>
+      <li id="perm-screen" class="perm-item">
+        <span class="perm-icon"><i class="fa-solid fa-display"></i></span>
+        <span class="perm-label">모니터 화면 공유</span>
+        <span class="perm-status pending">대기 중</span>
+      </li>
+    </ul>
+
+    <button id="request-permission-btn" class="btn btn-primary btn-lg">
+      <i class="fa-solid fa-unlock"></i> 권한 허용하고 시작하기
+    </button>
+    <p id="permission-error" class="error-msg hidden"></p>
+  </div>
+</section>
+
+<!-- ═══════════════════ 2단계: 닉네임 입력 화면 ═══════════════════ -->
+<section id="nickname-screen" class="screen">
+  <div class="glass-card intro-card">
+    <div class="intro-emoji">🌱</div>
+    <h1 class="intro-title">닉네임을 알려주세요!</h1>
+    <p class="intro-desc">이전에 쓰던 닉네임으로 접속하면<br>오늘의 누적 공부 시간이 이어져요 ⏱️</p>
+
+    <div class="preview-wrap">
+      <video id="cam-preview" autoplay muted playsinline></video>
+      <span class="preview-badge"><i class="fa-solid fa-circle rec-dot"></i> 내 웹캠 미리보기</span>
+    </div>
+
+    <div class="nickname-form">
+      <input id="nickname-input" type="text" maxlength="12" placeholder="닉네임 (최대 12자)" autocomplete="off">
+      <button id="start-study-btn" class="btn btn-primary btn-lg">
+        <i class="fa-solid fa-rocket"></i> 공부 시작!
+      </button>
+    </div>
+    <p id="nickname-error" class="error-msg hidden"></p>
+  </div>
+</section>
+
+<!-- ═══════════════════ 3단계: 메인 스터디 화면 ═══════════════════ -->
+<section id="main-screen" class="screen">
+  <header id="main-header">
+    <div class="header-left">
+      <span class="logo">☀️ 캠스터디</span>
+      <span id="online-count" class="online-pill"><i class="fa-solid fa-user-group"></i> 1명 공부 중</span>
+    </div>
+    <div class="header-right">
+      <span id="my-timer" class="my-timer" title="오늘 나의 누적 공부 시간">⏱️ 00:00:00</span>
+      <span id="reset-info" class="reset-info" title="매일 오전 4시에 기록이 초기화돼요">🌙 4AM 리셋</span>
+      <button id="leave-btn" class="btn btn-ghost" title="공부 종료"><i class="fa-solid fa-door-open"></i></button>
+    </div>
+  </header>
+
+  <!-- 유저 카드 가로 스크롤 영역 -->
+  <main id="card-strip" aria-label="참여자 화면 목록">
+    <!-- JS가 .user-card 요소들을 렌더링 -->
+  </main>
+
+  <!-- 우측 하단 플로팅 기록 버튼 -->
+  <button id="record-fab" class="fab" title="누적 공부 시간 랭킹 보기">📖</button>
+</section>
+
+<!-- ═══════════════════ 4단계: 유저 상세 화면 (더블클릭) ═══════════════════ -->
+<section id="detail-screen" class="screen">
+  <button id="detail-close-btn" class="btn btn-ghost detail-close" title="돌아가기">
+    <i class="fa-solid fa-arrow-left"></i> 돌아가기
+  </button>
+  <div class="detail-layout">
+    <div class="detail-media">
+      <div class="detail-video-box">
+        <video id="detail-cam" autoplay muted playsinline></video>
+        <span class="media-label"><i class="fa-solid fa-video"></i> 웹캠</span>
+      </div>
+      <div class="detail-video-box">
+        <video id="detail-screen-video" autoplay muted playsinline></video>
+        <span class="media-label"><i class="fa-solid fa-display"></i> 모니터 화면</span>
+      </div>
+    </div>
+    <div class="detail-info">
+      <div id="detail-avatar" class="detail-avatar">🐣</div>
+      <h2 id="detail-nickname" class="detail-nickname">닉네임</h2>
+      <p class="detail-caption">오늘의 누적 공부 시간</p>
+      <div id="detail-time" class="detail-time">00:00:00</div>
+      <div class="detail-cheer">🔥 오늘도 화이팅!</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ 기록/랭킹 모달 ═══════════════════ -->
+<div id="record-modal" class="modal-overlay hidden">
+  <div class="glass-card modal-card">
+    <div class="modal-header">
+      <h2>📖 오늘의 공부 랭킹</h2>
+      <button id="modal-close-btn" class="btn btn-ghost"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <p class="modal-sub">매일 <strong>오전 4시</strong>에 초기화돼요 🌙</p>
+    <ul id="ranking-list" class="ranking-list">
+      <!-- JS가 랭킹 행을 렌더링 -->
+    </ul>
+  </div>
+</div>
+
+<!-- ═══════════════════ 모니터 화면 공유 안내 모달 ═══════════════════ -->
+<div id="screen-guide-modal" class="modal-overlay hidden">
+  <div class="glass-card screen-guide-card">
+    <div class="screen-guide-img-wrap">
+      <img src="설명.png" alt="화면 공유 설명" class="screen-guide-img">
+    </div>
+    <p class="screen-guide-desc">
+      모니터 화면 공유는 우측 상단의 <strong>'전체 화면'</strong> 문구 클릭 → <strong>'전체 화면'</strong> 창 클릭 → 우측 하단의 <strong>'공유'</strong> 버튼 클릭 을 통해 허용할 수 있어요.
+    </p>
+    <button id="grant-screen-perm-btn" class="btn btn-primary btn-lg">
+      <i class="fa-solid fa-display"></i> 권한 허용
+    </button>
+  </div>
+</div>
+
+<script src="./js/app.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

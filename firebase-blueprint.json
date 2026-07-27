@@ -1,0 +1,18 @@
+{
+  "entities": {
+    "study_records": {
+      "title": "Study Records",
+      "description": "Daily study time records for participants",
+      "type": "object",
+      "properties": {
+        "nickname": { "type": "string" },
+        "study_day": { "type": "string" },
+        "total_seconds": { "type": "number" },
+        "is_online": { "type": "boolean" },
+        "avatar": { "type": "string" },
+        "last_seen": { "type": "number" }
+      },
+      "required": ["nickname", "study_day"]
+    }
+  }
+}

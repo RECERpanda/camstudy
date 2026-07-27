@@ -1,0 +1,10 @@
+{
+  "name": "Camstudy",
+  "description": "함께 공부하는 실시간 캠스터디 웹 애플리케이션 - 웹캠 & 모니터 화면 공유, 누적 공부 시간 랭킹, 4AM 리셋",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

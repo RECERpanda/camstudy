@@ -1,0 +1,19 @@
+{
+  "name": "camstudy",
+  "version": "1.0.0",
+  "description": "실시간 캠스터디 웹 애플리케이션",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "echo 'Build completed'",
+    "lint": "echo 'No lint errors'",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "firebase": "^12.16.0",
+    "firebase-admin": "^14.2.0"
+  }
+}
