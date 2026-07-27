@@ -258,30 +258,66 @@ async function handleStartStudy() {
   state.avatar = getAvatarForNickname(rawNickname);
   state.studyDay = getStudyDayKey();
 
-  // Sync / Create user record via REST Table API
-  try {
-    const res = await fetch('/tables/study_records', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        nickname: state.nickname,
-        study_day: state.studyDay,
-        avatar: state.avatar,
-        is_online: true
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const record = data.record || data.data;
-
-      if (record) {
-        state.recordId = record.id;
-        state.totalSeconds = record.total_seconds || 0;
+  // Sync / Create user record via Firestore (or fallback REST Table API)
+  if (window.db) {
+    try {
+      const docId = `${state.nickname}_${state.studyDay}`.replace(/[^a-zA-Z0-9가-힣_]/g, '_');
+      const docRef = window.db.collection('study_records').doc(docId);
+      const snapshot = await docRef.get();
+      if (snapshot.exists) {
+        const data = snapshot.data();
+        state.recordId = docId;
+        state.totalSeconds = data.total_seconds || 0;
+        await docRef.set({
+          nickname: state.nickname,
+          study_day: state.studyDay,
+          avatar: state.avatar,
+          is_online: true,
+          last_seen: Date.now()
+        }, { merge: true });
+      } else {
+        state.recordId = docId;
+        state.totalSeconds = 0;
+        await docRef.set({
+          nickname: state.nickname,
+          study_day: state.studyDay,
+          total_seconds: 0,
+          avatar: state.avatar,
+          is_online: true,
+          last_seen: Date.now()
+        });
       }
+    } catch (fsErr) {
+      console.warn('Firestore initialization error:', fsErr);
     }
-  } catch (err) {
-    console.warn('Backend API not available (static host fallback):', err);
   }
+
+  if (!state.recordId) {
+    try {
+      const res = await fetch('/tables/study_records', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nickname: state.nickname,
+          study_day: state.studyDay,
+          avatar: state.avatar,
+          is_online: true
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const record = data.record || data.data;
+
+        if (record) {
+          state.recordId = record.id;
+          state.totalSeconds = record.total_seconds || 0;
+        }
+      }
+    } catch (err) {
+      console.warn('Backend API not available (static host fallback):', err);
+    }
+  }
+
   if (!state.recordId) {
     state.recordId = `local-${Date.now()}`;
   }
@@ -302,17 +338,68 @@ function startTimerAndSync() {
 
   // 10-second Heartbeat
   if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
+  sendHeartbeat();
   state.heartbeatInterval = setInterval(sendHeartbeat, 10000);
 
-  // 5-second Participants Polling
-  if (state.pollInterval) clearInterval(state.pollInterval);
-  fetchAndRenderParticipants();
-  state.pollInterval = setInterval(fetchAndRenderParticipants, 5000);
+  // Realtime Firestore Listener or 5-second Participants Polling
+  if (window.db) {
+    try {
+      window.db.collection('study_records')
+        .where('study_day', '==', state.studyDay)
+        .onSnapshot((querySnapshot) => {
+          const now = Date.now();
+          const records = [];
+          querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            const lastSeen = data.last_seen || 0;
+            const isOnline = data.is_online && (now - lastSeen < 45000);
+            records.push({
+              id: doc.id,
+              nickname: data.nickname,
+              total_seconds: data.total_seconds || 0,
+              avatar: data.avatar || '🌱',
+              is_online: isOnline,
+              last_seen: lastSeen
+            });
+          });
+          state.participants = records;
+          renderCardStrip(records);
+          updateOnlineCount(records);
+        }, (error) => {
+          console.warn('Firestore onSnapshot error, falling back to polling:', error);
+          if (state.pollInterval) clearInterval(state.pollInterval);
+          fetchAndRenderParticipants();
+          state.pollInterval = setInterval(fetchAndRenderParticipants, 5000);
+        });
+    } catch (e) {
+      console.warn('Firestore listener setup failed:', e);
+      fetchAndRenderParticipants();
+      if (state.pollInterval) clearInterval(state.pollInterval);
+      state.pollInterval = setInterval(fetchAndRenderParticipants, 5000);
+    }
+  } else {
+    if (state.pollInterval) clearInterval(state.pollInterval);
+    fetchAndRenderParticipants();
+    state.pollInterval = setInterval(fetchAndRenderParticipants, 5000);
+  }
 }
 
-// Send Heartbeat to Server
+// Send Heartbeat to Server / Firestore
 async function sendHeartbeat() {
   if (!state.recordId) return;
+
+  if (window.db) {
+    try {
+      await window.db.collection('study_records').doc(state.recordId).set({
+        total_seconds: state.totalSeconds,
+        is_online: true,
+        last_seen: Date.now()
+      }, { merge: true });
+    } catch (fsErr) {
+      console.warn('Firestore heartbeat error:', fsErr);
+    }
+  }
+
   try {
     await fetch(`/tables/study_records/${state.recordId}`, {
       method: 'PATCH',
@@ -324,7 +411,7 @@ async function sendHeartbeat() {
       })
     });
   } catch (err) {
-    console.warn('Heartbeat error:', err);
+    // Ignore REST failure on static hosts
   }
 }
 
