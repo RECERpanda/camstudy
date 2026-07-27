@@ -344,15 +344,14 @@ function startTimerAndSync() {
   // Realtime Firestore Listener or 5-second Participants Polling
   if (window.db) {
     try {
-      window.db.collection('study_records')
-        .where('study_day', '==', state.studyDay)
-        .onSnapshot((querySnapshot) => {
-          const now = Date.now();
-          const records = [];
-          querySnapshot.forEach((doc) => {
-            const data = doc.data();
+      window.db.collection('study_records').onSnapshot((querySnapshot) => {
+        const now = Date.now();
+        const records = [];
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data && data.study_day === state.studyDay && data.nickname) {
             const lastSeen = data.last_seen || 0;
-            const isOnline = data.is_online && (now - lastSeen < 45000);
+            const isOnline = Boolean(data.is_online) && (now - lastSeen < 60000);
             records.push({
               id: doc.id,
               nickname: data.nickname,
@@ -361,16 +360,17 @@ function startTimerAndSync() {
               is_online: isOnline,
               last_seen: lastSeen
             });
-          });
-          state.participants = records;
-          renderCardStrip(records);
-          updateOnlineCount(records);
-        }, (error) => {
-          console.warn('Firestore onSnapshot error, falling back to polling:', error);
-          if (state.pollInterval) clearInterval(state.pollInterval);
-          fetchAndRenderParticipants();
-          state.pollInterval = setInterval(fetchAndRenderParticipants, 5000);
+          }
         });
+        state.participants = records;
+        renderCardStrip(records);
+        updateOnlineCount(records);
+      }, (error) => {
+        console.warn('Firestore onSnapshot error, falling back to polling:', error);
+        if (state.pollInterval) clearInterval(state.pollInterval);
+        fetchAndRenderParticipants();
+        state.pollInterval = setInterval(fetchAndRenderParticipants, 5000);
+      });
     } catch (e) {
       console.warn('Firestore listener setup failed:', e);
       fetchAndRenderParticipants();
@@ -391,6 +391,9 @@ async function sendHeartbeat() {
   if (window.db) {
     try {
       await window.db.collection('study_records').doc(state.recordId).set({
+        nickname: state.nickname,
+        study_day: state.studyDay,
+        avatar: state.avatar,
         total_seconds: state.totalSeconds,
         is_online: true,
         last_seen: Date.now()
@@ -641,6 +644,14 @@ function handleLeaveStudy() {
     if (state.pollInterval) clearInterval(state.pollInterval);
 
     // Send final offline status
+    if (state.recordId && window.db) {
+      window.db.collection('study_records').doc(state.recordId).set({
+        is_online: false,
+        total_seconds: state.totalSeconds,
+        last_seen: Date.now()
+      }, { merge: true }).catch(() => {});
+    }
+
     if (state.recordId) {
       fetch(`/tables/study_records/${state.recordId}`, {
         method: 'PATCH',
