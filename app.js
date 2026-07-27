@@ -1,4 +1,4 @@
-/* ☀️ 캠스터디 (Camstudy) — Client Application Logic */
+/* ☀️ 캠스터디 (Camstudy) — Client Application Logic with PeerJS WebRTC & Firestore */
 
 // Application State
 const state = {
@@ -16,6 +16,10 @@ const state = {
   pollInterval: null,
   resetTimeout: null,
   detailUser: null,
+  peer: null,
+  peerId: null,
+  calls: {},
+  remoteStreams: {},
 };
 
 const EMOJI_AVATARS = ['🌱', '🦊', '🐰', '🐱', '🐧', '🐻', '🐼', '🐯', '🦁', '🦉', '🐣', '🐶', '🦄', '🐝'];
@@ -60,13 +64,13 @@ function createMockStream(label, color = '#ff8e53') {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.fillStyle = color;
-    ctx.font = '24px "Jua", sans-serif';
+    ctx.font = '22px "Jua", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`[시뮬레이션] ${label}`, canvas.width / 2, canvas.height / 2 - 20);
+    ctx.fillText(label, canvas.width / 2, canvas.height / 2 - 20);
 
     // Pulse animation circle
     angle += 0.05;
-    const radius = 20 + Math.sin(angle) * 8;
+    const radius = 18 + Math.sin(angle) * 6;
     ctx.beginPath();
     ctx.arc(canvas.width / 2, canvas.height / 2 + 30, radius, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255, 142, 83, 0.6)';
@@ -77,6 +81,20 @@ function createMockStream(label, color = '#ff8e53') {
   draw();
 
   return canvas.captureStream(30);
+}
+
+// Combine webcam and screen share streams for PeerJS transmission
+function getMyCombinedStream() {
+  const tracks = [];
+  if (state.camStream) {
+    const camTracks = state.camStream.getVideoTracks();
+    if (camTracks.length > 0) tracks.push(camTracks[0]);
+  }
+  if (state.screenStream) {
+    const screenTracks = state.screenStream.getVideoTracks();
+    if (screenTracks.length > 0) tracks.push(screenTracks[0]);
+  }
+  return new MediaStream(tracks);
 }
 
 // Switch Active Screen
@@ -91,7 +109,6 @@ function showScreen(screenId) {
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', () => {
-  window.camstudyLoaded = true;
   state.studyDay = getStudyDayKey();
   setupEventListeners();
   scheduleNext4AMReset();
@@ -145,6 +162,12 @@ function setupEventListeners() {
   // Window unload heartbeat
   window.addEventListener('beforeunload', () => {
     if (state.recordId) {
+      if (window.db) {
+        window.db.collection('study_records').doc(state.recordId).set({
+          is_online: false,
+          last_seen: Date.now()
+        }, { merge: true }).catch(() => {});
+      }
       navigator.sendBeacon('/tables/study_records/' + state.recordId, JSON.stringify({
         is_online: false,
         total_seconds: state.totalSeconds
@@ -175,17 +198,16 @@ async function handleRequestPermissions() {
     }
   }
 
-  // Show Screen Share Guide Modal instead of immediately requesting screen share
+  // Show Screen Share Guide Modal
   const screenGuideModal = document.getElementById('screen-guide-modal');
   if (screenGuideModal) {
     screenGuideModal.classList.remove('hidden');
   } else {
-    // Fallback if modal missing
     handleRequestScreenShare();
   }
 }
 
-// Step 2: Request Screen Share Permission when user clicks '권한 허용' in guide modal
+// Step 2: Request Screen Share Permission
 async function handleRequestScreenShare() {
   const permScreenStatus = document.querySelector('#perm-screen .perm-status');
   const screenGuideModal = document.getElementById('screen-guide-modal');
@@ -202,12 +224,11 @@ async function handleRequestScreenShare() {
       permScreenStatus.className = 'perm-status approved';
     }
 
-    // Handle screen share stop by user
     const videoTrack = state.screenStream.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.onended = () => {
         console.log('Screen sharing stopped by user');
-        state.screenStream = createMockStream('모니터 화면 공유 중단됨', '#ef4444');
+        state.screenStream = createMockStream('모니터 화면 중단됨', '#ef4444');
         updateMyCardStreams();
       };
     }
@@ -226,8 +247,94 @@ async function handleRequestScreenShare() {
     camPreview.srcObject = state.camStream;
   }
 
-  // Move to Nickname Screen
   showScreen('nickname');
+}
+
+// PeerJS Initialization & Connection
+function initPeerJS() {
+  if (typeof Peer === 'undefined') {
+    console.warn('PeerJS library is not available in browser.');
+    return;
+  }
+
+  const cleanNick = state.nickname.replace(/[^a-zA-Z0-9]/g, '_');
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+  state.peerId = `camstudy_${cleanNick}_${randomSuffix}`;
+
+  try {
+    if (state.peer) {
+      try { state.peer.destroy(); } catch (e) {}
+    }
+
+    state.peer = new Peer(state.peerId, {
+      debug: 1,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+      }
+    });
+
+    state.peer.on('open', (id) => {
+      console.log('✅ PeerJS Server Connected! Peer ID:', id);
+      state.peerId = id;
+      sendHeartbeat();
+    });
+
+    // Answer incoming calls
+    state.peer.on('call', (call) => {
+      console.log('📞 Received WebRTC call from peer:', call.peer);
+      const myStream = getMyCombinedStream();
+      call.answer(myStream);
+
+      call.on('stream', (remoteStream) => {
+        console.log('📹 Received remote stream from peer:', call.peer);
+        state.remoteStreams[call.peer] = remoteStream;
+        updateUserStreamsInUI(call.peer, remoteStream);
+      });
+
+      call.on('error', (err) => {
+        console.warn('Call error with peer:', call.peer, err);
+      });
+    });
+
+    state.peer.on('error', (err) => {
+      console.warn('PeerJS Error:', err);
+    });
+  } catch (err) {
+    console.warn('PeerJS setup failed:', err);
+  }
+}
+
+// Connect to remote peer via PeerJS
+function connectToRemotePeer(remotePeerId) {
+  if (!state.peer || !remotePeerId || remotePeerId === state.peerId) return;
+  if (state.calls[remotePeerId]) return; // Already calling/connected
+
+  console.log('📱 Outgoing WebRTC Call to peer:', remotePeerId);
+  const myStream = getMyCombinedStream();
+  try {
+    const call = state.peer.call(remotePeerId, myStream);
+    if (call) {
+      state.calls[remotePeerId] = call;
+      call.on('stream', (remoteStream) => {
+        console.log('📹 Connected to remote peer stream:', remotePeerId);
+        state.remoteStreams[remotePeerId] = remoteStream;
+        updateUserStreamsInUI(remotePeerId, remoteStream);
+      });
+      call.on('close', () => {
+        delete state.calls[remotePeerId];
+        delete state.remoteStreams[remotePeerId];
+      });
+      call.on('error', (err) => {
+        console.warn('Outgoing call error:', err);
+        delete state.calls[remotePeerId];
+      });
+    }
+  } catch (err) {
+    console.warn('Error calling remote peer:', remotePeerId, err);
+  }
 }
 
 // Handle Nickname Submission and Start Study
@@ -258,6 +365,9 @@ async function handleStartStudy() {
   state.avatar = getAvatarForNickname(rawNickname);
   state.studyDay = getStudyDayKey();
 
+  // Initialize PeerJS WebRTC
+  initPeerJS();
+
   // Sync / Create user record via Firestore (or fallback REST Table API)
   if (window.db) {
     try {
@@ -273,6 +383,7 @@ async function handleStartStudy() {
           study_day: state.studyDay,
           avatar: state.avatar,
           is_online: true,
+          peer_id: state.peerId || '',
           last_seen: Date.now()
         }, { merge: true });
       } else {
@@ -284,6 +395,7 @@ async function handleStartStudy() {
           total_seconds: 0,
           avatar: state.avatar,
           is_online: true,
+          peer_id: state.peerId || '',
           last_seen: Date.now()
         });
       }
@@ -301,7 +413,8 @@ async function handleStartStudy() {
           nickname: state.nickname,
           study_day: state.studyDay,
           avatar: state.avatar,
-          is_online: true
+          is_online: true,
+          peer_id: state.peerId || ''
         })
       });
       if (res.ok) {
@@ -358,6 +471,7 @@ function startTimerAndSync() {
               total_seconds: data.total_seconds || 0,
               avatar: data.avatar || '🌱',
               is_online: isOnline,
+              peer_id: data.peer_id || '',
               last_seen: lastSeen
             });
           }
@@ -365,6 +479,13 @@ function startTimerAndSync() {
         state.participants = records;
         renderCardStrip(records);
         updateOnlineCount(records);
+
+        // Attempt P2P WebRTC calls to other online peers
+        records.forEach(p => {
+          if (p.is_online && p.nickname !== state.nickname && p.peer_id) {
+            connectToRemotePeer(p.peer_id);
+          }
+        });
       }, (error) => {
         console.warn('Firestore onSnapshot error, falling back to polling:', error);
         if (state.pollInterval) clearInterval(state.pollInterval);
@@ -396,6 +517,7 @@ async function sendHeartbeat() {
         avatar: state.avatar,
         total_seconds: state.totalSeconds,
         is_online: true,
+        peer_id: state.peerId || '',
         last_seen: Date.now()
       }, { merge: true });
     } catch (fsErr) {
@@ -410,6 +532,7 @@ async function sendHeartbeat() {
       body: JSON.stringify({
         total_seconds: state.totalSeconds,
         is_online: true,
+        peer_id: state.peerId || '',
         last_seen: Date.now()
       })
     });
@@ -434,6 +557,13 @@ async function fetchAndRenderParticipants() {
   state.participants = records;
   renderCardStrip(records);
   updateOnlineCount(records);
+
+  // Connect to peers in polling fallback
+  records.forEach(p => {
+    if (p.is_online && p.nickname !== state.nickname && p.peer_id) {
+      connectToRemotePeer(p.peer_id);
+    }
+  });
 }
 
 // Render User Cards Horizontal Strip
@@ -449,7 +579,8 @@ function renderCardStrip(records) {
       nickname: state.nickname,
       total_seconds: state.totalSeconds,
       avatar: state.avatar,
-      is_online: true
+      is_online: true,
+      peer_id: state.peerId || ''
     });
   }
 
@@ -459,6 +590,8 @@ function renderCardStrip(records) {
     const isMe = user.nickname === state.nickname;
     const card = document.createElement('div');
     card.className = `user-card ${isMe ? 'is-me' : ''}`;
+    card.setAttribute('data-peer-id', user.peer_id || '');
+    card.setAttribute('data-nickname', user.nickname);
 
     const displayTime = isMe ? formatTime(state.totalSeconds) : formatTime(user.total_seconds || 0);
 
@@ -491,17 +624,48 @@ function renderCardStrip(records) {
       if (camVideo && state.camStream) camVideo.srcObject = state.camStream;
       if (screenVideo && state.screenStream) screenVideo.srcObject = state.screenStream;
     } else {
-      // Remote mock stream simulation
-      if (camVideo) camVideo.srcObject = createMockStream(`${user.nickname} 웹캠`, '#4b5563');
-      if (screenVideo) screenVideo.srcObject = createMockStream(`${user.nickname} 화면`, '#374151');
+      const remoteStream = state.remoteStreams[user.peer_id] || state.remoteStreams[user.nickname];
+      if (remoteStream) {
+        const tracks = remoteStream.getVideoTracks();
+        if (tracks.length > 0) {
+          camVideo.srcObject = new MediaStream([tracks[0]]);
+        }
+        if (tracks.length > 1) {
+          screenVideo.srcObject = new MediaStream([tracks[1]]);
+        } else {
+          screenVideo.srcObject = createMockStream(`${user.nickname} 화면`, '#374151');
+        }
+      } else {
+        if (camVideo) camVideo.srcObject = createMockStream(`${user.nickname} 웹캠`, '#4b5563');
+        if (screenVideo) screenVideo.srcObject = createMockStream(`${user.nickname} 화면`, '#374151');
+      }
     }
 
-    // Click or Double Click to open Detail Screen (Mobile & Desktop friendly)
-    card.addEventListener('click', (e) => {
+    card.addEventListener('click', () => {
       openUserDetail(user);
     });
 
     cardStrip.appendChild(card);
+  });
+}
+
+// Dynamically update stream elements when a WebRTC call connects
+function updateUserStreamsInUI(peerKey, remoteStream) {
+  const cards = document.querySelectorAll('.user-card');
+  cards.forEach(card => {
+    const peerId = card.getAttribute('data-peer-id');
+    const nickname = card.getAttribute('data-nickname');
+    if (peerId === peerKey || nickname === peerKey) {
+      const camVideo = card.querySelector('.cam-video');
+      const screenVideo = card.querySelector('.screen-video');
+      const tracks = remoteStream.getVideoTracks();
+      if (tracks.length > 0 && camVideo) {
+        camVideo.srcObject = new MediaStream([tracks[0]]);
+      }
+      if (tracks.length > 1 && screenVideo) {
+        screenVideo.srcObject = new MediaStream([tracks[1]]);
+      }
+    }
   });
 }
 
@@ -532,13 +696,11 @@ function updateTimerDisplay() {
     timerEl.textContent = `⏱️ ${formatTime(state.totalSeconds)}`;
   }
 
-  // Also update time on my card in card strip if present
   const myTimeEl = document.querySelector('.user-card.is-me .user-time');
   if (myTimeEl) {
     myTimeEl.textContent = formatTime(state.totalSeconds);
   }
 
-  // Update detail view time if open on me
   if (state.screen === 'detail' && state.detailUser && state.detailUser.nickname === state.nickname) {
     const detailTimeEl = document.getElementById('detail-time');
     if (detailTimeEl) detailTimeEl.textContent = formatTime(state.totalSeconds);
@@ -564,8 +726,15 @@ function openUserDetail(user) {
     if (detailCam && state.camStream) detailCam.srcObject = state.camStream;
     if (detailScreenVideo && state.screenStream) detailScreenVideo.srcObject = state.screenStream;
   } else {
-    if (detailCam) detailCam.srcObject = createMockStream(`${user.nickname} 웹캠`, '#3b82f6');
-    if (detailScreenVideo) detailScreenVideo.srcObject = createMockStream(`${user.nickname} 모니터`, '#10b981');
+    const remoteStream = state.remoteStreams[user.peer_id] || state.remoteStreams[user.nickname];
+    if (remoteStream) {
+      const tracks = remoteStream.getVideoTracks();
+      if (tracks.length > 0 && detailCam) detailCam.srcObject = new MediaStream([tracks[0]]);
+      if (tracks.length > 1 && detailScreenVideo) detailScreenVideo.srcObject = new MediaStream([tracks[1]]);
+    } else {
+      if (detailCam) detailCam.srcObject = createMockStream(`${user.nickname} 웹캠`, '#3b82f6');
+      if (detailScreenVideo) detailScreenVideo.srcObject = createMockStream(`${user.nickname} 모니터`, '#10b981');
+    }
   }
 
   showScreen('detail');
@@ -577,7 +746,6 @@ function openRankingModal() {
   const rankingList = document.getElementById('ranking-list');
   if (!modal || !rankingList) return;
 
-  // Sort participants by total_seconds descending
   const sorted = [...state.participants].sort((a, b) => (b.total_seconds || 0) - (a.total_seconds || 0));
 
   rankingList.innerHTML = '';
@@ -643,7 +811,6 @@ function handleLeaveStudy() {
     if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
     if (state.pollInterval) clearInterval(state.pollInterval);
 
-    // Send final offline status
     if (state.recordId && window.db) {
       window.db.collection('study_records').doc(state.recordId).set({
         is_online: false,
@@ -660,7 +827,10 @@ function handleLeaveStudy() {
       }).catch(() => {});
     }
 
-    // Stop streams
+    if (state.peer) {
+      try { state.peer.destroy(); } catch (e) {}
+    }
+
     if (state.camStream) {
       state.camStream.getTracks().forEach(t => t.stop());
     }
