@@ -151,7 +151,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 <script>
-  // Initialize Firebase Cloud Firestore
+  // Initialize Firebase Cloud Firestore with custom database ID
   const firebaseConfig = {
     projectId: "concentrated-rookery-7mbw7",
     appId: "1:282587117947:web:a5014a8aa10ab5a877a5de",
@@ -163,8 +163,16 @@
   if (!firebase.apps.length) {
     firebase.initializeApp(firebaseConfig);
   }
-  // Connect to named database instance
-  window.db = firebase.firestore();
+  const DB_ID = "ai-studio-camstudy-889db342-c2a2-4ca1-9f7c-8c50c9604c4c";
+  try {
+    window.db = firebase.app().firestore(DB_ID);
+  } catch (e1) {
+    try {
+      window.db = firebase.firestore(firebase.app(), DB_ID);
+    } catch (e2) {
+      window.db = firebase.firestore();
+    }
+  }
 </script>
 
 <script src="./js/app.js"></script>
