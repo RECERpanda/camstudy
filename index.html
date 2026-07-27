@@ -147,6 +147,26 @@
   </div>
 </div>
 
+<!-- Firebase JS SDK (Compat version for static hosting like GitHub Pages) -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<script>
+  // Initialize Firebase Cloud Firestore
+  const firebaseConfig = {
+    projectId: "concentrated-rookery-7mbw7",
+    appId: "1:282587117947:web:a5014a8aa10ab5a877a5de",
+    apiKey: "AIzaSyB7xqEXboFfALxnEgrBXDaHjtJcBtb2kGk",
+    authDomain: "concentrated-rookery-7mbw7.firebaseapp.com",
+    storageBucket: "concentrated-rookery-7mbw7.firebasestorage.app",
+    messagingSenderId: "282587117947"
+  };
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+  // Connect to named database instance
+  window.db = firebase.firestore();
+</script>
+
 <script src="./js/app.js"></script>
 <script src="./app.js"></script>
 </body>
