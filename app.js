@@ -5,6 +5,7 @@ const state = {
   screen: 'permission', // 'permission' | 'nickname' | 'main' | 'detail'
   camStream: null,
   screenStream: null,
+  myCombinedStream: null,
   nickname: '',
   recordId: null,
   totalSeconds: 0,
@@ -14,12 +15,15 @@ const state = {
   timerInterval: null,
   heartbeatInterval: null,
   pollInterval: null,
+  unsubscribeFirestore: null,
   resetTimeout: null,
   detailUser: null,
   peer: null,
   peerId: null,
   calls: {},
   remoteStreams: {},
+  webcamVideo: null,
+  screenVideo: null,
 };
 
 const EMOJI_AVATARS = ['🌱', '🦊', '🐰', '🐱', '🐧', '🐻', '🐼', '🐯', '🦁', '🦉', '🐣', '🐶', '🦄', '🐝'];
@@ -54,17 +58,17 @@ function getAvatarForNickname(nick) {
 // Create animated fallback canvas stream when hardware stream is unavailable
 function createMockStream(label, color = '#ff8e53') {
   const canvas = document.createElement('canvas');
-  canvas.width = 640;
-  canvas.height = 360;
+  canvas.width = 400;
+  canvas.height = 800;
   const ctx = canvas.getContext('2d');
   let angle = 0;
 
   function draw() {
-    ctx.fillStyle = '#1f2937';
+    ctx.fillStyle = '#111827';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.fillStyle = color;
-    ctx.font = '22px "Jua", sans-serif';
+    ctx.font = 'bold 20px "Jua", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(label, canvas.width / 2, canvas.height / 2 - 20);
 
@@ -83,18 +87,67 @@ function createMockStream(label, color = '#ff8e53') {
   return canvas.captureStream(30);
 }
 
-// Combine webcam and screen share streams for PeerJS transmission
-function getMyCombinedStream() {
-  const tracks = [];
-  if (state.camStream) {
-    const camTracks = state.camStream.getVideoTracks();
-    if (camTracks.length > 0) tracks.push(camTracks[0]);
+// Secret Room ID & Peer List for Password-less Multi-user Connection
+const SECRET_ROOM_ID = "korean-student-study-room-777";
+let connectedPeers = new Set();
+
+// Create Combined Canvas Stream (Webcam + Screen) with Mirror Effect & 16:9 Aspect Ratios
+function drawCanvasCombinedStream() {
+  if (!state.webcamVideo) {
+    state.webcamVideo = document.createElement('video');
+    if (state.camStream) state.webcamVideo.srcObject = state.camStream;
+    state.webcamVideo.autoplay = true;
+    state.webcamVideo.playsInline = true;
+    state.webcamVideo.muted = true;
   }
-  if (state.screenStream) {
-    const screenTracks = state.screenStream.getVideoTracks();
-    if (screenTracks.length > 0) tracks.push(screenTracks[0]);
+
+  if (!state.screenVideo) {
+    state.screenVideo = document.createElement('video');
+    if (state.screenStream) state.screenVideo.srcObject = state.screenStream;
+    state.screenVideo.autoplay = true;
+    state.screenVideo.playsInline = true;
+    state.screenVideo.muted = true;
   }
-  return new MediaStream(tracks);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 480;
+  canvas.height = 640;
+  const ctx = canvas.getContext('2d');
+  const halfH = canvas.height / 2;
+
+  function drawCombined() {
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Draw Webcam (Top half: 0, 0, 480, 320) - HORIZONTALLY FLIPPED (웹캠 좌우 반전 거울 효과)
+    if (state.webcamVideo && state.webcamVideo.readyState >= 2) {
+      ctx.save();
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(state.webcamVideo, 0, 0, canvas.width, halfH);
+      ctx.restore();
+    }
+
+    // 2. Draw Screen Share (Bottom half: 0, 320, 480, 320) - NORMAL (모니터 화면 정방향)
+    if (state.screenVideo && state.screenVideo.readyState >= 2) {
+      ctx.drawImage(state.screenVideo, 0, halfH, canvas.width, halfH);
+    }
+
+    // 3. Text overlays
+    ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+    ctx.fillRect(12, 12, 220, 30);
+    ctx.fillRect(12, halfH + 12, 140, 30);
+
+    ctx.fillStyle = "white";
+    ctx.font = "bold 15px sans-serif";
+    ctx.fillText((state.nickname || '나') + " 님의 웹캠", 22, 32);
+    ctx.fillText("모니터 화면", 22, halfH + 32);
+
+    requestAnimationFrame(drawCombined);
+  }
+  drawCombined();
+
+  state.myCombinedStream = canvas.captureStream(30);
 }
 
 // Switch Active Screen
@@ -131,6 +184,16 @@ function setupEventListeners() {
   if (nickInput) {
     nickInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') handleStartStudy();
+    });
+  }
+
+  // Connect to Friend Button
+  const connectBtn = document.getElementById('connect-friend-btn');
+  const friendInput = document.getElementById('friend-id-input');
+  if (connectBtn) connectBtn.addEventListener('click', () => connectToFriend());
+  if (friendInput) {
+    friendInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') connectToFriend();
     });
   }
 
@@ -176,13 +239,12 @@ function setupEventListeners() {
   });
 }
 
-// Step 1: Request Webcam Permission First
+// Step 1: Request Webcam Permission
 async function handleRequestPermissions() {
   const permCamStatus = document.querySelector('#perm-cam .perm-status');
   const permErr = document.getElementById('permission-error');
   if (permErr) permErr.classList.add('hidden');
 
-  // Request Webcam
   try {
     state.camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     if (permCamStatus) {
@@ -198,7 +260,6 @@ async function handleRequestPermissions() {
     }
   }
 
-  // Show Screen Share Guide Modal
   const screenGuideModal = document.getElementById('screen-guide-modal');
   if (screenGuideModal) {
     screenGuideModal.classList.remove('hidden');
@@ -216,7 +277,6 @@ async function handleRequestScreenShare() {
     screenGuideModal.classList.add('hidden');
   }
 
-  // Request Screen Share
   try {
     state.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
     if (permScreenStatus) {
@@ -229,7 +289,7 @@ async function handleRequestScreenShare() {
       videoTrack.onended = () => {
         console.log('Screen sharing stopped by user');
         state.screenStream = createMockStream('모니터 화면 중단됨', '#ef4444');
-        updateMyCardStreams();
+        if (state.screenVideo) state.screenVideo.srcObject = state.screenStream;
       };
     }
   } catch (err) {
@@ -250,91 +310,162 @@ async function handleRequestScreenShare() {
   showScreen('nickname');
 }
 
-// PeerJS Initialization & Connection
+// PeerJS Automatic Room Connection (Secret ID + Peer Fallback)
 function initPeerJS() {
   if (typeof Peer === 'undefined') {
     console.warn('PeerJS library is not available in browser.');
     return;
   }
 
-  const cleanNick = state.nickname.replace(/[^a-zA-Z0-9]/g, '_');
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-  state.peerId = `camstudy_${cleanNick}_${randomSuffix}`;
+  const idDisplay = document.getElementById('my-id-display');
+  const statusEl = document.getElementById('connection-status');
+  if (statusEl) statusEl.innerText = "비밀 아지트 연결 시도 중...";
 
   try {
     if (state.peer) {
       try { state.peer.destroy(); } catch (e) {}
     }
 
-    state.peer = new Peer(state.peerId, {
-      debug: 1,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      }
-    });
+    // 1. 비밀 고정 ID로 방장 접속 시도
+    state.peer = new Peer(SECRET_ROOM_ID);
 
     state.peer.on('open', (id) => {
-      console.log('✅ PeerJS Server Connected! Peer ID:', id);
+      console.log('⭐ 내가 1호 접속자(방장)입니다! ID:', id);
       state.peerId = id;
+      if (idDisplay) idDisplay.innerText = id;
+      if (statusEl) {
+        statusEl.innerText = "⭐ 스터디 방장(1호) 접속 완료!";
+        statusEl.style.background = "#dbeafe";
+        statusEl.style.color = "#1d4ed8";
+      }
       sendHeartbeat();
-    });
 
-    // Answer incoming calls
-    state.peer.on('call', (call) => {
-      console.log('📞 Received WebRTC call from peer:', call.peer);
-      const myStream = getMyCombinedStream();
-      call.answer(myStream);
-
-      call.on('stream', (remoteStream) => {
-        console.log('📹 Received remote stream from peer:', call.peer);
-        state.remoteStreams[call.peer] = remoteStream;
-        updateUserStreamsInUI(call.peer, remoteStream);
+      // 전화를 거는 스터디원들에게 화면 전달
+      state.peer.on('call', (call) => {
+        console.log('📞 Participant joined:', call.peer);
+        call.answer(state.myCombinedStream);
+        call.on('stream', (remoteStream) => {
+          addRemoteVideo(remoteStream, call.peer);
+        });
       });
 
-      call.on('error', (err) => {
-        console.warn('Call error with peer:', call.peer, err);
+      // 새로운 스터디원 접속 시 기존 멤버 목록 전송
+      state.peer.on('connection', (conn) => {
+        conn.on('open', () => {
+          conn.send(Array.from(connectedPeers));
+          connectedPeers.add(conn.peer);
+        });
       });
     });
 
     state.peer.on('error', (err) => {
-      console.warn('PeerJS Error:', err);
+      // 2. 이미 방장이 있다면 (unavailable-id 에러 발생)
+      if (err.type === 'unavailable-id') {
+        console.log('🌱 이미 방이 존재합니다. 일반 스터디원으로 자동 접속합니다.');
+
+        const randomStr = Math.random().toString(36).substring(2, 7);
+        const myRandomId = 'study-user-' + randomStr;
+
+        state.peer = new Peer(myRandomId);
+
+        state.peer.on('open', (assignedId) => {
+          console.log('🌱 스터디원 접속 완료! ID:', assignedId);
+          state.peerId = assignedId;
+          if (idDisplay) idDisplay.innerText = assignedId;
+          if (statusEl) {
+            statusEl.innerText = "🌱 스터디원으로 자동 접속 완료!";
+            statusEl.style.background = "#dcfce7";
+            statusEl.style.color = "#15803d";
+          }
+          sendHeartbeat();
+
+          // 1호 접속자(방장)에게 전화걸기
+          const callToHost = state.peer.call(SECRET_ROOM_ID, state.myCombinedStream);
+          if (callToHost) {
+            callToHost.on('stream', (remoteStream) => {
+              addRemoteVideo(remoteStream, SECRET_ROOM_ID);
+            });
+          }
+
+          // 1호 접속자에게 다른 멤버들의 목록을 받아서 각각 전화걸기
+          const conn = state.peer.connect(SECRET_ROOM_ID);
+          if (conn) {
+            conn.on('open', () => {
+              conn.on('data', (otherPeers) => {
+                if (Array.isArray(otherPeers)) {
+                  otherPeers.forEach(otherId => {
+                    if (otherId !== assignedId) {
+                      const call = state.peer.call(otherId, state.myCombinedStream);
+                      if (call) {
+                        call.on('stream', (remoteStream) => addRemoteVideo(remoteStream, otherId));
+                      }
+                    }
+                  });
+                }
+              });
+            });
+          }
+        });
+
+        // 다른 멤버들이 나에게 전화걸 때 수락
+        state.peer.on('call', (call) => {
+          call.answer(state.myCombinedStream);
+          call.on('stream', (remoteStream) => addRemoteVideo(remoteStream, call.peer));
+        });
+      } else {
+        console.warn('PeerJS Error:', err);
+        if (statusEl) statusEl.innerText = "접속 상태: " + err.type;
+      }
     });
   } catch (err) {
     console.warn('PeerJS setup failed:', err);
   }
 }
 
-// Connect to remote peer via PeerJS
-function connectToRemotePeer(remotePeerId) {
-  if (!state.peer || !remotePeerId || remotePeerId === state.peerId) return;
-  if (state.calls[remotePeerId]) return; // Already calling/connected
+// Connect to Friend function (Directly based on user txt source)
+function connectToFriend(friendId) {
+  if (!friendId) {
+    const friendInput = document.getElementById('friend-id-input');
+    if (friendInput) friendId = friendInput.value.trim();
+  }
 
-  console.log('📱 Outgoing WebRTC Call to peer:', remotePeerId);
-  const myStream = getMyCombinedStream();
+  if (!friendId) return alert("친구 ID를 입력해 줘!");
+  if (!state.peer || friendId === state.peerId) return;
+  if (state.calls[friendId]) return;
+
+  const statusEl = document.getElementById('connection-status');
+  if (statusEl) statusEl.innerText = "친구에게 연결 중...";
+
   try {
-    const call = state.peer.call(remotePeerId, myStream);
+    const call = state.peer.call(friendId, state.myCombinedStream);
     if (call) {
-      state.calls[remotePeerId] = call;
+      state.calls[friendId] = call;
       call.on('stream', (remoteStream) => {
-        console.log('📹 Connected to remote peer stream:', remotePeerId);
-        state.remoteStreams[remotePeerId] = remoteStream;
-        updateUserStreamsInUI(remotePeerId, remoteStream);
+        console.log('📹 Connected to friend stream:', friendId);
+        if (statusEl) statusEl.innerText = "친구와 연결 성공!";
+        addRemoteVideo(remoteStream, friendId);
       });
+
       call.on('close', () => {
-        delete state.calls[remotePeerId];
-        delete state.remoteStreams[remotePeerId];
+        delete state.calls[friendId];
+        delete state.remoteStreams[friendId];
+        renderCardStrip(state.participants);
       });
+
       call.on('error', (err) => {
         console.warn('Outgoing call error:', err);
-        delete state.calls[remotePeerId];
+        delete state.calls[friendId];
       });
     }
   } catch (err) {
-    console.warn('Error calling remote peer:', remotePeerId, err);
+    console.warn('Error calling friend:', friendId, err);
   }
+}
+
+// Add Remote Video Stream to State and Re-render Cards
+function addRemoteVideo(stream, peerId) {
+  state.remoteStreams[peerId] = stream;
+  renderCardStrip(state.participants);
 }
 
 // Handle Nickname Submission and Start Study
@@ -361,14 +492,28 @@ async function handleStartStudy() {
 
   if (nickErr) nickErr.classList.add('hidden');
 
+  // Cleanup existing session if re-logging in
+  if (state.unsubscribeFirestore) {
+    try { state.unsubscribeFirestore(); } catch(e) {}
+    state.unsubscribeFirestore = null;
+  }
+  if (state.timerInterval) clearInterval(state.timerInterval);
+  if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
+  if (state.pollInterval) clearInterval(state.pollInterval);
+  state.calls = {};
+  state.remoteStreams = {};
+
   state.nickname = rawNickname;
   state.avatar = getAvatarForNickname(rawNickname);
   state.studyDay = getStudyDayKey();
 
+  // Create combined canvas stream (Webcam top, Screen bottom with text overlays)
+  drawCanvasCombinedStream();
+
   // Initialize PeerJS WebRTC
   initPeerJS();
 
-  // Sync / Create user record via Firestore (or fallback REST Table API)
+  // Sync / Create user record via Firestore
   if (window.db) {
     try {
       const docId = `${state.nickname}_${state.studyDay}`.replace(/[^a-zA-Z0-9가-힣_]/g, '_');
@@ -454,10 +599,15 @@ function startTimerAndSync() {
   sendHeartbeat();
   state.heartbeatInterval = setInterval(sendHeartbeat, 10000);
 
-  // Realtime Firestore Listener or 5-second Participants Polling
+  // Realtime Firestore Listener
   if (window.db) {
     try {
-      window.db.collection('study_records').onSnapshot((querySnapshot) => {
+      if (state.unsubscribeFirestore) {
+        try { state.unsubscribeFirestore(); } catch(e) {}
+        state.unsubscribeFirestore = null;
+      }
+
+      state.unsubscribeFirestore = window.db.collection('study_records').onSnapshot((querySnapshot) => {
         const now = Date.now();
         const records = [];
         querySnapshot.forEach((doc) => {
@@ -480,10 +630,10 @@ function startTimerAndSync() {
         renderCardStrip(records);
         updateOnlineCount(records);
 
-        // Attempt P2P WebRTC calls to other online peers
+        // Auto-connect to online peers in room
         records.forEach(p => {
           if (p.is_online && p.nickname !== state.nickname && p.peer_id) {
-            connectToRemotePeer(p.peer_id);
+            connectToFriend(p.peer_id);
           }
         });
       }, (error) => {
@@ -558,23 +708,29 @@ async function fetchAndRenderParticipants() {
   renderCardStrip(records);
   updateOnlineCount(records);
 
-  // Connect to peers in polling fallback
+  // Auto-connect to peers in polling fallback
   records.forEach(p => {
     if (p.is_online && p.nickname !== state.nickname && p.peer_id) {
-      connectToRemotePeer(p.peer_id);
+      connectToFriend(p.peer_id);
     }
   });
 }
 
-// Render User Cards Horizontal Strip
+// Render User Cards Horizontal Strip (Using Combined Stream Video Element)
 function renderCardStrip(records) {
   const cardStrip = document.getElementById('card-strip');
   if (!cardStrip) return;
 
+  // Filter only active online users or current user
+  const onlineRecords = records.filter(user => {
+    const isMe = user.nickname === state.nickname;
+    return isMe || Boolean(user.is_online);
+  });
+
   // Make sure my record is present
-  const myRecordInList = records.some(r => r.nickname === state.nickname);
-  if (!myRecordInList) {
-    records.unshift({
+  const myRecordInList = onlineRecords.some(r => r.nickname === state.nickname);
+  if (!myRecordInList && state.nickname) {
+    onlineRecords.unshift({
       id: state.recordId || 'me',
       nickname: state.nickname,
       total_seconds: state.totalSeconds,
@@ -586,7 +742,7 @@ function renderCardStrip(records) {
 
   cardStrip.innerHTML = '';
 
-  records.forEach(user => {
+  onlineRecords.forEach(user => {
     const isMe = user.nickname === state.nickname;
     const card = document.createElement('div');
     card.className = `user-card ${isMe ? 'is-me' : ''}`;
@@ -605,79 +761,34 @@ function renderCardStrip(records) {
         <span class="user-time">${displayTime}</span>
       </div>
       <div class="card-media">
-        <div class="cam-half">
-          <video class="cam-video" autoplay muted playsinline></video>
-          <span class="half-label"><i class="fa-solid fa-video"></i> 웹캠</span>
-        </div>
-        <div class="screen-half">
-          <video class="screen-video" autoplay muted playsinline></video>
-          <span class="half-label"><i class="fa-solid fa-display"></i> 모니터 화면</span>
-        </div>
+        <video class="combined-video" autoplay muted playsinline style="width:100%; height:100%; object-fit:cover; background:#000;"></video>
       </div>
     `;
 
-    // Video streams attachment
-    const camVideo = card.querySelector('.cam-video');
-    const screenVideo = card.querySelector('.screen-video');
+    const videoEl = card.querySelector('.combined-video');
 
     if (isMe) {
-      if (camVideo && state.camStream) camVideo.srcObject = state.camStream;
-      if (screenVideo && state.screenStream) screenVideo.srcObject = state.screenStream;
+      if (videoEl && state.myCombinedStream) {
+        videoEl.srcObject = state.myCombinedStream;
+      }
     } else {
-      const remoteStream = state.remoteStreams[user.peer_id] || state.remoteStreams[user.nickname];
-      if (remoteStream) {
-        const tracks = remoteStream.getVideoTracks();
-        if (tracks.length > 0) {
-          camVideo.srcObject = new MediaStream([tracks[0]]);
-        }
-        if (tracks.length > 1) {
-          screenVideo.srcObject = new MediaStream([tracks[1]]);
-        } else {
-          screenVideo.srcObject = createMockStream(`${user.nickname} 화면`, '#374151');
-        }
-      } else {
-        if (camVideo) camVideo.srcObject = createMockStream(`${user.nickname} 웹캠`, '#4b5563');
-        if (screenVideo) screenVideo.srcObject = createMockStream(`${user.nickname} 화면`, '#374151');
+      const remoteStream = state.remoteStreams[user.peer_id] || state.remoteStreams[user.nickname] || state.remoteStreams[user.id];
+      if (remoteStream && videoEl) {
+        videoEl.srcObject = remoteStream;
+      } else if (videoEl) {
+        videoEl.srcObject = createMockStream(`${user.nickname} 화면`, '#3b82f6');
       }
     }
 
     card.addEventListener('click', () => {
       openUserDetail(user);
     });
+    card.addEventListener('dblclick', () => {
+      openUserDetail(user);
+    });
 
     cardStrip.appendChild(card);
   });
-}
-
-// Dynamically update stream elements when a WebRTC call connects
-function updateUserStreamsInUI(peerKey, remoteStream) {
-  const cards = document.querySelectorAll('.user-card');
-  cards.forEach(card => {
-    const peerId = card.getAttribute('data-peer-id');
-    const nickname = card.getAttribute('data-nickname');
-    if (peerId === peerKey || nickname === peerKey) {
-      const camVideo = card.querySelector('.cam-video');
-      const screenVideo = card.querySelector('.screen-video');
-      const tracks = remoteStream.getVideoTracks();
-      if (tracks.length > 0 && camVideo) {
-        camVideo.srcObject = new MediaStream([tracks[0]]);
-      }
-      if (tracks.length > 1 && screenVideo) {
-        screenVideo.srcObject = new MediaStream([tracks[1]]);
-      }
-    }
-  });
-}
-
-// Update Stream Sources on My Card
-function updateMyCardStreams() {
-  const myCard = document.querySelector('.user-card.is-me');
-  if (myCard) {
-    const camVid = myCard.querySelector('.cam-video');
-    const screenVid = myCard.querySelector('.screen-video');
-    if (camVid && state.camStream) camVid.srcObject = state.camStream;
-    if (screenVid && state.screenStream) screenVid.srcObject = state.screenStream;
-  }
 }
 
 // Update Online Count Pill
@@ -726,11 +837,10 @@ function openUserDetail(user) {
     if (detailCam && state.camStream) detailCam.srcObject = state.camStream;
     if (detailScreenVideo && state.screenStream) detailScreenVideo.srcObject = state.screenStream;
   } else {
-    const remoteStream = state.remoteStreams[user.peer_id] || state.remoteStreams[user.nickname];
+    const remoteStream = state.remoteStreams[user.peer_id] || state.remoteStreams[user.nickname] || state.remoteStreams[user.id];
     if (remoteStream) {
-      const tracks = remoteStream.getVideoTracks();
-      if (tracks.length > 0 && detailCam) detailCam.srcObject = new MediaStream([tracks[0]]);
-      if (tracks.length > 1 && detailScreenVideo) detailScreenVideo.srcObject = new MediaStream([tracks[1]]);
+      if (detailCam) detailCam.srcObject = remoteStream;
+      if (detailScreenVideo) detailScreenVideo.srcObject = remoteStream;
     } else {
       if (detailCam) detailCam.srcObject = createMockStream(`${user.nickname} 웹캠`, '#3b82f6');
       if (detailScreenVideo) detailScreenVideo.srcObject = createMockStream(`${user.nickname} 모니터`, '#10b981');
@@ -811,6 +921,11 @@ function handleLeaveStudy() {
     if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
     if (state.pollInterval) clearInterval(state.pollInterval);
 
+    if (state.unsubscribeFirestore) {
+      try { state.unsubscribeFirestore(); } catch(e) {}
+      state.unsubscribeFirestore = null;
+    }
+
     if (state.recordId && window.db) {
       window.db.collection('study_records').doc(state.recordId).set({
         is_online: false,
@@ -829,14 +944,32 @@ function handleLeaveStudy() {
 
     if (state.peer) {
       try { state.peer.destroy(); } catch (e) {}
+      state.peer = null;
+      state.peerId = null;
     }
 
     if (state.camStream) {
       state.camStream.getTracks().forEach(t => t.stop());
+      state.camStream = null;
     }
     if (state.screenStream) {
       state.screenStream.getTracks().forEach(t => t.stop());
+      state.screenStream = null;
     }
+    state.myCombinedStream = null;
+
+    // Reset session states
+    state.recordId = null;
+    state.nickname = '';
+    state.totalSeconds = 0;
+    state.participants = [];
+    state.calls = {};
+    state.remoteStreams = {};
+    state.webcamVideo = null;
+    state.screenVideo = null;
+
+    const cardStrip = document.getElementById('card-strip');
+    if (cardStrip) cardStrip.innerHTML = '';
 
     showScreen('permission');
   }
