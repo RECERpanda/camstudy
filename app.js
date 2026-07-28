@@ -161,11 +161,17 @@ function showScreen(screenId) {
 }
 
 // Initialize Application
-document.addEventListener('DOMContentLoaded', () => {
+function initApp() {
   state.studyDay = getStudyDayKey();
   setupEventListeners();
   scheduleNext4AMReset();
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
 
 // Setup DOM Event Listeners
 function setupEventListeners() {
@@ -246,10 +252,14 @@ async function handleRequestPermissions() {
   if (permErr) permErr.classList.add('hidden');
 
   try {
-    state.camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    if (permCamStatus) {
-      permCamStatus.textContent = '승인됨';
-      permCamStatus.className = 'perm-status approved';
+    if (navigator?.mediaDevices?.getUserMedia) {
+      state.camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      if (permCamStatus) {
+        permCamStatus.textContent = '승인됨';
+        permCamStatus.className = 'perm-status approved';
+      }
+    } else {
+      throw new Error('getUserMedia not supported');
     }
   } catch (err) {
     console.warn('Webcam permission denied or error:', err);
@@ -278,19 +288,23 @@ async function handleRequestScreenShare() {
   }
 
   try {
-    state.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-    if (permScreenStatus) {
-      permScreenStatus.textContent = '승인됨';
-      permScreenStatus.className = 'perm-status approved';
-    }
+    if (navigator?.mediaDevices?.getDisplayMedia) {
+      state.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      if (permScreenStatus) {
+        permScreenStatus.textContent = '승인됨';
+        permScreenStatus.className = 'perm-status approved';
+      }
 
-    const videoTrack = state.screenStream.getVideoTracks()[0];
-    if (videoTrack) {
-      videoTrack.onended = () => {
-        console.log('Screen sharing stopped by user');
-        state.screenStream = createMockStream('모니터 화면 중단됨', '#ef4444');
-        if (state.screenVideo) state.screenVideo.srcObject = state.screenStream;
-      };
+      const videoTrack = state.screenStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          console.log('Screen sharing stopped by user');
+          state.screenStream = createMockStream('모니터 화면 중단됨', '#ef4444');
+          if (state.screenVideo) state.screenVideo.srcObject = state.screenStream;
+        };
+      }
+    } else {
+      throw new Error('getDisplayMedia not supported');
     }
   } catch (err) {
     console.warn('Screen share permission denied or error:', err);
@@ -309,6 +323,16 @@ async function handleRequestScreenShare() {
 
   showScreen('nickname');
 }
+
+// Global functions exposure
+window.handleRequestPermissions = handleRequestPermissions;
+window.handleRequestScreenShare = handleRequestScreenShare;
+window.handleStartStudy = handleStartStudy;
+window.handleLeaveStudy = handleLeaveStudy;
+window.openRankingModal = openRankingModal;
+window.closeRankingModal = closeRankingModal;
+window.connectToFriend = connectToFriend;
+window.showScreen = showScreen;
 
 // PeerJS Automatic Room Connection (Secret ID + Peer Fallback)
 function initPeerJS() {
