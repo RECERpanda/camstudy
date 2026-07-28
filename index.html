@@ -40,7 +40,7 @@
       </li>
     </ul>
 
-    <button id="request-permission-btn" class="btn btn-primary btn-lg">
+    <button id="request-permission-btn" class="btn btn-primary btn-lg" onclick="handleRequestPermissions()">
       <i class="fa-solid fa-unlock"></i> 권한 허용하고 시작하기
     </button>
     <p id="permission-error" class="error-msg hidden"></p>
@@ -61,7 +61,7 @@
 
     <div class="nickname-form">
       <input id="nickname-input" type="text" maxlength="12" placeholder="닉네임 (최대 12자)" autocomplete="off">
-      <button id="start-study-btn" class="btn btn-primary btn-lg">
+      <button id="start-study-btn" class="btn btn-primary btn-lg" onclick="handleStartStudy()">
         <i class="fa-solid fa-rocket"></i> 공부 시작!
       </button>
     </div>
@@ -80,7 +80,7 @@
     <div class="header-right">
       <span id="my-timer" class="my-timer" title="오늘 나의 누적 공부 시간">⏱️ 00:00:00</span>
       <span id="reset-info" class="reset-info" title="매일 오전 4시에 기록이 초기화돼요">🌙 4AM 리셋</span>
-      <button id="leave-btn" class="btn btn-ghost" title="공부 종료"><i class="fa-solid fa-door-open"></i></button>
+      <button id="leave-btn" class="btn btn-ghost" title="공부 종료" onclick="handleLeaveStudy()"><i class="fa-solid fa-door-open"></i></button>
     </div>
   </header>
 
@@ -90,12 +90,12 @@
   </main>
 
   <!-- 우측 하단 플로팅 기록 버튼 -->
-  <button id="record-fab" class="fab" title="누적 공부 시간 랭킹 보기">📖</button>
+  <button id="record-fab" class="fab" title="누적 공부 시간 랭킹 보기" onclick="openRankingModal()">📖</button>
 </section>
 
 <!-- ═══════════════════ 4단계: 유저 상세 화면 (더블클릭) ═══════════════════ -->
 <section id="detail-screen" class="screen">
-  <button id="detail-close-btn" class="btn btn-ghost detail-close" title="돌아가기">
+  <button id="detail-close-btn" class="btn btn-ghost detail-close" title="돌아가기" onclick="showScreen('main')">
     <i class="fa-solid fa-arrow-left"></i> 돌아가기
   </button>
   <div class="detail-layout">
@@ -124,7 +124,7 @@
   <div class="glass-card modal-card">
     <div class="modal-header">
       <h2>📖 오늘의 공부 랭킹</h2>
-      <button id="modal-close-btn" class="btn btn-ghost"><i class="fa-solid fa-xmark"></i></button>
+      <button id="modal-close-btn" class="btn btn-ghost" onclick="closeRankingModal()"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <p class="modal-sub">매일 <strong>오전 4시</strong>에 초기화돼요 🌙</p>
     <ul id="ranking-list" class="ranking-list">
@@ -137,12 +137,12 @@
 <div id="screen-guide-modal" class="modal-overlay hidden">
   <div class="glass-card screen-guide-card">
     <div class="screen-guide-img-wrap">
-      <img src="설명.png" alt="화면 공유 설명" class="screen-guide-img">
+      <img src="설명.png" alt="화면 공유 설명" class="screen-guide-img" onerror="this.style.display='none'">
     </div>
     <p class="screen-guide-desc">
       모니터 화면 공유는 우측 상단의 <strong>'전체 화면'</strong> 문구 클릭 → <strong>'전체 화면'</strong> 창 클릭 → 우측 하단의 <strong>'공유'</strong> 버튼 클릭 을 통해 허용할 수 있어요.
     </p>
-    <button id="grant-screen-perm-btn" class="btn btn-primary btn-lg">
+    <button id="grant-screen-perm-btn" class="btn btn-primary btn-lg" onclick="handleRequestScreenShare()">
       <i class="fa-solid fa-display"></i> 권한 허용
     </button>
   </div>
