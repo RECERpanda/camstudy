@@ -71,6 +71,7 @@
 
 <!-- ═══════════════════ 3단계: 메인 스터디 화면 ═══════════════════ -->
 <section id="main-screen" class="screen">
+  <!-- 메인 헤더 -->
   <header id="main-header">
     <div class="header-left">
       <span class="logo">☀️ 캠스터디</span>
@@ -147,11 +148,18 @@
   </div>
 </div>
 
-<!-- Firebase JS SDK (Compat version for static hosting like GitHub Pages) -->
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-<script>
-  // Initialize Firebase Cloud Firestore with custom database ID
+<!-- Firebase JS SDK (Modular Version) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import {
+    getFirestore,
+    collection,
+    doc,
+    getDoc,
+    setDoc,
+    onSnapshot
+  } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
   const firebaseConfig = {
     projectId: "concentrated-rookery-7mbw7",
     appId: "1:282587117947:web:a5014a8aa10ab5a877a5de",
@@ -160,18 +168,57 @@
     storageBucket: "concentrated-rookery-7mbw7.firebasestorage.app",
     messagingSenderId: "282587117947"
   };
-  if (!firebase.apps.length) {
-    firebase.initializeApp(firebaseConfig);
-  }
+
   const DB_ID = "ai-studio-camstudy-889db342-c2a2-4ca1-9f7c-8c50c9604c4c";
+
   try {
-    window.db = firebase.app().firestore(DB_ID);
-  } catch (e1) {
-    try {
-      window.db = firebase.firestore(firebase.app(), DB_ID);
-    } catch (e2) {
-      window.db = firebase.firestore();
-    }
+    const app = initializeApp(firebaseConfig);
+    const firestoreDb = getFirestore(app, DB_ID);
+
+    window.db = {
+      collection: (colName) => ({
+        doc: (docId) => ({
+          get: async () => {
+            const docRef = doc(firestoreDb, colName, docId);
+            const snap = await getDoc(docRef);
+            return {
+              exists: snap.exists(),
+              data: () => snap.data()
+            };
+          },
+          set: async (data, options) => {
+            const docRef = doc(firestoreDb, colName, docId);
+            return await setDoc(docRef, data, options || {});
+          }
+        }),
+        onSnapshot: (onNext, onError) => {
+          const colRef = collection(firestoreDb, colName);
+          return onSnapshot(
+            colRef,
+            (snapshot) => {
+              const compatSnapshot = {
+                forEach: (callback) => {
+                  snapshot.docs.forEach((docSnap) => {
+                    callback({
+                      id: docSnap.id,
+                      data: () => docSnap.data()
+                    });
+                  });
+                }
+              };
+              onNext(compatSnapshot);
+            },
+            (err) => {
+              console.warn("Firestore onSnapshot error:", err);
+              if (onError) onError(err);
+            }
+          );
+        }
+      })
+    };
+    console.log("🔥 Firebase Modular Firestore connected successfully:", DB_ID);
+  } catch (err) {
+    console.error("Firebase init error:", err);
   }
 </script>
 
@@ -179,6 +226,5 @@
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
 <script src="./js/app.js"></script>
-<script src="./app.js"></script>
 </body>
 </html>
